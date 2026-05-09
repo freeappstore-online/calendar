@@ -1,39 +1,63 @@
-# APPNAME
+# VibeCode (create.freeappstore.online)
 
-## Platform: FreeAppStore
-- Hosted on Cloudflare Pages (static SPA only)
-- ONE environment only (production). No dev/staging. Fix forward, no rollbacks.
-- Push to `main` auto-deploys to production via CF Pages
-- Domain: APPNAME.freeappstore.online
+## What this is
+The VibeCode React app — AI-powered app builder for FreeAppStore.
+Users describe an app, the agent builds it, deploys it to freeappstore.online.
+
+Deployed at: `create.freeappstore.online`
+Separate from the store site (freeappstore.online) which is static HTML.
 
 ## Tech Stack
 - TypeScript, React 19, Vite 6, Tailwind CSS 4.1, pnpm
-- No backend (standalone app) — all data in localStorage
-- Must work offline (PWA)
+- React Router for /profile route
+- No backend — calls api.freeappstore.online and agent.freeappstore.online
 
-## Brand Guidelines
-- Fonts: Manrope (body) + Fraunces (display)
-- Follow CSS variables in index.css for colors
-- Sidebar on desktop (17rem), bottom dock on mobile
-- Dark mode via prefers-color-scheme (no toggle)
-- Border radius: 1.25rem cards, 0.75rem buttons
+## Structure
+```
+create/
+├── web/
+│   ├── src/
+│   │   ├── App.tsx                 ← Router (/ = Create, /profile = Profile)
+│   │   ├── main.tsx
+│   │   ├── index.css               ← Tailwind + brand CSS variables
+│   │   ├── components/
+│   │   │   └── Nav.tsx             ← Header nav + mobile hamburger
+│   │   ├── pages/
+│   │   │   ├── Create.tsx          ← VibeCode chat + preview + deploy
+│   │   │   └── Profile.tsx         ← User profile + account management
+│   │   ├── hooks/
+│   │   │   ├── useAuth.ts          ← Auth context (GitHub OAuth)
+│   │   │   └── useAgent.ts         ← SSE streaming, projects, chat state
+│   │   └── lib/
+│   │       └── api.ts              ← API client (auth, agent URLs)
+│   ├── public/
+│   │   ├── manifest.json
+│   │   └── _redirects              ← SPA routing for CF Pages
+│   └── package.json
+├── package.json
+└── CLAUDE.md
+```
 
 ## Development
-- `pnpm dev` — start dev server
-- `pnpm build` — production build
-- `pnpm typecheck` — verify types
+```bash
+pnpm install
+pnpm dev          # http://localhost:5173
+pnpm build        # builds to web/dist
+```
 
-## Rules
-- No analytics, no tracking, no cookies
-- All user data in localStorage only
-- App must work offline after first load
-- Include "Part of FreeAppStore" link in settings/sidebar
-- MIT license
+## Deployment
+Hosted on Cloudflare Pages.
+- Domain: create.freeappstore.online
+- Build command: `npx pnpm@10 install && npx pnpm@10 build`
+- Build output: `web/dist`
+- Push to main = auto-deploy
 
-## Platform Docs & Publishing
-- **Full AI guide:** https://raw.githubusercontent.com/freeappstore-online/ops/main/SKILLS.md
-- **Store registry:** ~/dev/fas/infra/freeappstore/registry.json (add app here to list on store)
-- **Store site:** ~/dev/fas/infra/freeappstore/ (auto-deploys on push)
-- **Publish script:** ~/dev/fas/infra/freeappstore/scripts/publish.sh
-- **Deploy:** Push to main auto-deploys via GitHub Actions. No manual steps needed.
-- **DNS/domains:** See SKILLS.md for CF API commands
+## Auth
+Uses the same `.freeappstore.online` cookie as the store site.
+GitHub OAuth via api.freeappstore.online/auth/*.
+useAuth hook checks /auth/me on load and provides user context.
+
+## Agent
+Calls agent.freeappstore.online/session/:id/* for chat.
+useAgent hook handles: SSE streaming, tool call rendering,
+project management (localStorage), deploy status tracking.

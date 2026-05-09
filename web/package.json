@@ -1,5 +1,5 @@
 {
-  "name": "@APPNAME/web",
+  "name": "@freeappstore-create/web",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "react-router-dom": "^7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1",

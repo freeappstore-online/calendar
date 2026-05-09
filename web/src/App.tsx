@@ -1,17 +1,20 @@
-import { Shell } from "./components/Shell";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthContext, useAuthProvider } from "./hooks/useAuth";
+import { Create } from "./pages/Create";
+import { Profile } from "./pages/Profile";
 
 export default function App() {
+  const auth = useAuthProvider();
+
   return (
-    <Shell>
-      <h1
-        className="text-3xl font-bold mb-4"
-        style={{ fontFamily: "Fraunces, serif" }}
-      >
-        Welcome to APPNAME
-      </h1>
-      <p style={{ color: "var(--muted)" }}>
-        Edit <code>src/App.tsx</code> to get started.
-      </p>
-    </Shell>
+    <AuthContext.Provider value={auth}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Create />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthContext.Provider>
   );
 }

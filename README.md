@@ -9,7 +9,7 @@ npm i -g @freeappstore/cli
 fas init my-app
 ```
 
-The CLI clones this template, replaces every `APPNAME` placeholder with your app id, runs `git init`, and makes the first commit — the result is a runnable app you can `pnpm dev` immediately.
+The CLI clones this template, replaces every `freeappstore` placeholder with your app id, runs `git init`, and makes the first commit — the result is a runnable app you can `pnpm dev` immediately.
 
 ## What's in here
 
@@ -28,7 +28,7 @@ If you really want to scaffold by hand:
 ```bash
 git clone https://github.com/freeappstore-online/template-standalone my-app
 cd my-app
-# Replace APPNAME → my-app in package.json, web/index.html, web/src/main.tsx, README, etc.
+# Replace freeappstore → my-app in package.json, web/index.html, web/src/main.tsx, README, etc.
 rm -rf .git && git init
 pnpm install && pnpm dev
 ```
