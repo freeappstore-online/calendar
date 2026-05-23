@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { initApp } from '@freeappstore/sdk'
 import { FasShell, BuildInfo, Modal, Tabs } from '@freeappstore/sdk/ui'
 import { useAuth } from '@freeappstore/sdk/hooks'
@@ -13,12 +13,59 @@ import {
 
 const fas = initApp({ appId: 'calendar' })
 
+// ---- Mobile detection ----
+
+function useIsMobile(breakpoint = 640) {
+  const [mobile, setMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches)
+    setMobile(mq.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [breakpoint])
+  return mobile
+}
+
+// ---- Swipe support ----
+
+function useSwipe(onLeft: () => void, onRight: () => void) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let startX = 0
+    let startY = 0
+    const onStart = (e: TouchEvent) => {
+      startX = e.touches[0].clientX
+      startY = e.touches[0].clientY
+    }
+    const onEnd = (e: TouchEvent) => {
+      const dx = e.changedTouches[0].clientX - startX
+      const dy = e.changedTouches[0].clientY - startY
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        if (dx > 0) onRight()
+        else onLeft()
+      }
+    }
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchend', onEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchend', onEnd)
+    }
+  }, [onLeft, onRight])
+  return ref
+}
+
 // ---- Shared styles ----
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)',
   border: '1px solid var(--line-strong)', background: 'var(--paper)',
-  color: 'var(--ink)', fontSize: '0.875rem', outline: 'none',
+  color: 'var(--ink)', fontSize: '1rem', outline: 'none',
 }
 const btnStyle: React.CSSProperties = {
   padding: '0.5rem 1rem', borderRadius: 'var(--radius-sm)', border: 'none',
@@ -106,13 +153,13 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
         </div>
         <div>
           <label style={labelStyle}>Color</label>
-          <div style={{ display: 'flex', gap: '0.375rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
             {EVENT_COLORS.map(c => (
               <button key={c} type="button" onClick={() => setColor(c)}
                 style={{
-                  width: 28, height: 28, borderRadius: '50%', background: c, border: 'none',
+                  width: 32, height: 32, borderRadius: '50%', background: c, border: 'none',
                   cursor: 'pointer', outline: color === c ? '2px solid var(--ink)' : 'none',
-                  outlineOffset: 2, transition: 'outline 100ms',
+                  outlineOffset: 2, transition: 'outline 100ms', minWidth: 32,
                 }} />
             ))}
           </div>
@@ -135,12 +182,13 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
           {onDelete && (
             <button type="button" onClick={onDelete}
-              style={{ ...btnOutline, color: 'var(--error)', borderColor: 'var(--error)', marginRight: 'auto' }}>
+              style={{ ...btnOutline, color: 'var(--error)', borderColor: 'var(--error)', marginRight: 'auto',
+                minHeight: 44 }}>
               Delete
             </button>
           )}
-          <button type="button" onClick={onClose} style={btnOutline}>Cancel</button>
-          <button type="submit" style={btnStyle}>{event ? 'Save' : 'Create'}</button>
+          <button type="button" onClick={onClose} style={{ ...btnOutline, minHeight: 44 }}>Cancel</button>
+          <button type="submit" style={{ ...btnStyle, minHeight: 44 }}>{event ? 'Save' : 'Create'}</button>
         </div>
       </form>
     </Modal>
@@ -149,10 +197,11 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
 
 // ---- Month View ----
 
-function MonthView({ year, month, events, selectedDate, onSelectDate, onEventClick }: {
+function MonthView({ year, month, events, selectedDate, onSelectDate, onEventClick, isMobile }: {
   year: number, month: number, events: CalendarEvent[]
   selectedDate: string, onSelectDate: (d: string) => void
   onEventClick: (e: CalendarEvent) => void
+  isMobile: boolean
 }) {
   const grid = useMemo(() => getMonthGrid(year, month), [year, month])
   const todayStr = toDateStr(new Date())
@@ -160,9 +209,9 @@ function MonthView({ year, month, events, selectedDate, onSelectDate, onEventCli
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
-        {DAY_NAMES.map(d => (
-          <div key={d} style={{ textAlign: 'center', fontSize: '0.7rem', fontWeight: 600,
-            color: 'var(--muted)', padding: '0.375rem 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{d}</div>
+        {(isMobile ? ['S','M','T','W','T','F','S'] : DAY_NAMES).map((d, i) => (
+          <div key={i} style={{ textAlign: 'center', fontSize: isMobile ? '0.65rem' : '0.7rem', fontWeight: 600,
+            color: 'var(--muted)', padding: '0.25rem 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{d}</div>
         ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: 1 }}>
@@ -179,35 +228,51 @@ function MonthView({ year, month, events, selectedDate, onSelectDate, onEventCli
                 <button key={dateStr} onClick={() => onSelectDate(dateStr)}
                   style={{
                     background: isSelected ? 'var(--accent-soft)' : 'transparent',
-                    border: 'none', borderRadius: 'var(--radius-sm)', padding: '0.25rem',
+                    border: 'none', borderRadius: 'var(--radius-sm)',
+                    padding: isMobile ? '2px' : '0.25rem',
                     cursor: 'pointer', display: 'flex', flexDirection: 'column',
-                    alignItems: 'stretch', minHeight: 0, overflow: 'hidden',
+                    alignItems: 'center', minHeight: isMobile ? 40 : 0, overflow: 'hidden',
                     opacity: isCurrentMonth ? 1 : 0.35,
                   }}>
                   <span style={{
-                    fontSize: '0.75rem', fontWeight: isToday ? 700 : 500,
+                    fontSize: isMobile ? '0.8rem' : '0.75rem', fontWeight: isToday ? 700 : 500,
                     color: isToday ? '#fff' : 'var(--ink)',
                     background: isToday ? 'var(--accent)' : 'transparent',
-                    borderRadius: '50%', width: 22, height: 22,
+                    borderRadius: '50%',
+                    width: isMobile ? 26 : 22, height: isMobile ? 26 : 22,
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    alignSelf: 'flex-end',
                   }}>{day.getDate()}</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2, overflow: 'hidden', flex: 1 }}>
-                    {dayEvents.slice(0, 3).map(ev => (
-                      <div key={ev.id} onClick={e => { e.stopPropagation(); onEventClick(ev) }}
-                        style={{
-                          background: ev.color, color: '#fff', fontSize: '0.6rem',
-                          padding: '1px 4px', borderRadius: 3, whiteSpace: 'nowrap',
-                          overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer',
-                          fontWeight: 500, lineHeight: '1.3',
-                        }}>{ev.title}</div>
-                    ))}
-                    {dayEvents.length > 3 && (
-                      <span style={{ fontSize: '0.55rem', color: 'var(--muted)', textAlign: 'center' }}>
-                        +{dayEvents.length - 3} more
-                      </span>
-                    )}
-                  </div>
+                  {isMobile ? (
+                    // Colored dots on mobile
+                    dayEvents.length > 0 && (
+                      <div style={{ display: 'flex', gap: 2, marginTop: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+                        {dayEvents.slice(0, 3).map(ev => (
+                          <div key={ev.id} style={{
+                            width: 5, height: 5, borderRadius: '50%', background: ev.color,
+                          }} />
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    // Text chips on desktop
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2,
+                      overflow: 'hidden', flex: 1, width: '100%' }}>
+                      {dayEvents.slice(0, 3).map(ev => (
+                        <div key={ev.id} onClick={e => { e.stopPropagation(); onEventClick(ev) }}
+                          style={{
+                            background: ev.color, color: '#fff', fontSize: '0.6rem',
+                            padding: '1px 4px', borderRadius: 3, whiteSpace: 'nowrap',
+                            overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer',
+                            fontWeight: 500, lineHeight: '1.3',
+                          }}>{ev.title}</div>
+                      ))}
+                      {dayEvents.length > 3 && (
+                        <span style={{ fontSize: '0.55rem', color: 'var(--muted)', textAlign: 'center' }}>
+                          +{dayEvents.length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </button>
               )
             })}
@@ -218,35 +283,48 @@ function MonthView({ year, month, events, selectedDate, onSelectDate, onEventCli
   )
 }
 
-// ---- Week View ----
+// ---- Week View (3-day on mobile, 7-day on desktop) ----
 
-function WeekView({ dateStr, events, onSelectDate, onEventClick }: {
+function WeekView({ dateStr, events, onSelectDate, onEventClick, isMobile }: {
   dateStr: string, events: CalendarEvent[]
   onSelectDate: (d: string) => void, onEventClick: (e: CalendarEvent) => void
+  isMobile: boolean
 }) {
-  const days = useMemo(() => getWeekDays(parseDate(dateStr)), [dateStr])
+  const allDays = useMemo(() => getWeekDays(parseDate(dateStr)), [dateStr])
   const todayStr = toDateStr(new Date())
+
+  // On mobile show 3 days centered on selected date
+  const days = useMemo(() => {
+    if (!isMobile) return allDays
+    const sel = parseDate(dateStr)
+    return [addDays(sel, -1), sel, addDays(sel, 1)]
+  }, [isMobile, dateStr, allDays])
+
+  const colCount = days.length
 
   return (
     <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '3rem repeat(7, 1fr)', minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `2.5rem repeat(${colCount}, 1fr)`, minWidth: 0 }}>
         {/* Header */}
-        <div style={{ borderBottom: '1px solid var(--line)' }} />
+        <div style={{ borderBottom: '1px solid var(--line)', position: 'sticky', top: 0,
+          background: 'var(--paper)', zIndex: 2 }} />
         {days.map(d => {
           const ds = toDateStr(d)
           const isToday = ds === todayStr
+          const isSelected = ds === dateStr
           return (
             <div key={ds} onClick={() => onSelectDate(ds)}
-              style={{ textAlign: 'center', padding: '0.375rem 0', borderBottom: '1px solid var(--line)',
-                cursor: 'pointer' }}>
+              style={{ textAlign: 'center', padding: '0.5rem 0', borderBottom: '1px solid var(--line)',
+                cursor: 'pointer', position: 'sticky', top: 0, background: 'var(--paper)', zIndex: 2 }}>
               <div style={{ fontSize: '0.65rem', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase' }}>
-                {DAY_NAMES[d.getDay()]}
+                {isMobile ? DAY_NAMES[d.getDay()] : DAY_NAMES[d.getDay()]}
               </div>
               <div style={{
-                fontSize: '1rem', fontWeight: isToday ? 700 : 500,
+                fontSize: isMobile ? '1.1rem' : '1rem', fontWeight: isToday ? 700 : (isSelected ? 600 : 500),
                 color: isToday ? '#fff' : 'var(--ink)',
                 background: isToday ? 'var(--accent)' : 'transparent',
-                borderRadius: '50%', width: 28, height: 28,
+                borderRadius: '50%',
+                width: isMobile ? 32 : 28, height: isMobile ? 32 : 28,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 margin: '0 auto',
               }}>{d.getDate()}</div>
@@ -257,8 +335,8 @@ function WeekView({ dateStr, events, onSelectDate, onEventClick }: {
         {HOURS.map(h => (
           <div key={h} style={{ display: 'contents' }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--muted)', textAlign: 'right',
-              paddingRight: '0.375rem', paddingTop: 2, borderTop: '1px solid var(--line)',
-              height: 48 }}>
+              paddingRight: '0.25rem', paddingTop: 2, borderTop: '1px solid var(--line)',
+              height: isMobile ? 56 : 48 }}>
               {h === 0 ? '' : formatTime(`${String(h).padStart(2, '0')}:00`)}
             </div>
             {days.map(d => {
@@ -267,21 +345,23 @@ function WeekView({ dateStr, events, onSelectDate, onEventClick }: {
                 const evH = parseInt(ev.startTime.split(':')[0])
                 return evH === h
               })
+              const cellH = isMobile ? 56 : 48
               return (
                 <div key={`${ds}-${h}`} onClick={() => onSelectDate(ds)}
-                  style={{ borderTop: '1px solid var(--line)', height: 48, position: 'relative',
+                  style={{ borderTop: '1px solid var(--line)', height: cellH, position: 'relative',
                     cursor: 'pointer', borderLeft: '1px solid var(--line)' }}>
                   {dayEvents.map(ev => {
                     const startMin = timeToMinutes(ev.startTime)
                     const endMin = timeToMinutes(ev.endTime)
-                    const top = ((startMin % 60) / 60) * 48
-                    const height = Math.max(((endMin - startMin) / 60) * 48, 18)
+                    const top = ((startMin % 60) / 60) * cellH
+                    const height = Math.max(((endMin - startMin) / 60) * cellH, isMobile ? 24 : 18)
                     return (
                       <div key={ev.id} onClick={e => { e.stopPropagation(); onEventClick(ev) }}
                         style={{
                           position: 'absolute', top, left: 1, right: 1,
                           height, background: ev.color, color: '#fff',
-                          borderRadius: 3, padding: '1px 3px', fontSize: '0.6rem',
+                          borderRadius: 4, padding: '2px 4px',
+                          fontSize: isMobile ? '0.7rem' : '0.6rem',
                           overflow: 'hidden', cursor: 'pointer', fontWeight: 500,
                           lineHeight: '1.3', zIndex: 1,
                         }}>
@@ -301,12 +381,14 @@ function WeekView({ dateStr, events, onSelectDate, onEventClick }: {
 
 // ---- Day View ----
 
-function DayView({ date, events, onEventClick }: {
+function DayView({ date, events, onEventClick, isMobile }: {
   date: string, events: CalendarEvent[], onEventClick: (e: CalendarEvent) => void
+  isMobile: boolean
 }) {
   const dayEvents = useMemo(() => sortByTime(getEventsForDate(events, date)), [events, date])
   const d = parseDate(date)
   const todayStr = toDateStr(new Date())
+  const cellH = isMobile ? 56 : 48
 
   return (
     <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
@@ -324,28 +406,28 @@ function DayView({ date, events, onEventClick }: {
       </div>
       <div style={{ position: 'relative' }}>
         {HOURS.map(h => (
-          <div key={h} style={{ display: 'flex', borderTop: '1px solid var(--line)', height: 48 }}>
-            <div style={{ width: '3rem', fontSize: '0.6rem', color: 'var(--muted)',
-              textAlign: 'right', paddingRight: '0.375rem', paddingTop: 2, flexShrink: 0 }}>
+          <div key={h} style={{ display: 'flex', borderTop: '1px solid var(--line)', height: cellH }}>
+            <div style={{ width: '2.5rem', fontSize: '0.6rem', color: 'var(--muted)',
+              textAlign: 'right', paddingRight: '0.25rem', paddingTop: 2, flexShrink: 0 }}>
               {h === 0 ? '' : formatTime(`${String(h).padStart(2, '0')}:00`)}
             </div>
             <div style={{ flex: 1, position: 'relative' }}>
               {dayEvents.filter(ev => parseInt(ev.startTime.split(':')[0]) === h).map(ev => {
                 const startMin = timeToMinutes(ev.startTime)
                 const endMin = timeToMinutes(ev.endTime)
-                const top = ((startMin % 60) / 60) * 48
-                const height = Math.max(((endMin - startMin) / 60) * 48, 24)
+                const top = ((startMin % 60) / 60) * cellH
+                const height = Math.max(((endMin - startMin) / 60) * cellH, 28)
                 return (
                   <div key={ev.id} onClick={() => onEventClick(ev)}
                     style={{
                       position: 'absolute', top, left: 2, right: 4,
                       height, background: ev.color, color: '#fff',
                       borderRadius: 'var(--radius-sm)', padding: '0.25rem 0.5rem',
-                      fontSize: '0.75rem', overflow: 'hidden', cursor: 'pointer',
+                      fontSize: '0.8rem', overflow: 'hidden', cursor: 'pointer',
                       zIndex: 1, display: 'flex', flexDirection: 'column', gap: 1,
                     }}>
                     <span style={{ fontWeight: 600 }}>{ev.title}</span>
-                    <span style={{ opacity: 0.85, fontSize: '0.65rem' }}>
+                    <span style={{ opacity: 0.85, fontSize: '0.7rem' }}>
                       {formatTimeRange(ev.startTime, ev.endTime)}
                     </span>
                   </div>
@@ -372,9 +454,10 @@ function DaySidebar({ date, events, onEventClick, onNewEvent }: {
     <div style={{ padding: '0.75rem', borderTop: '1px solid var(--line)', background: 'var(--paper-deep)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
         <h3 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>
-          {MONTH_NAMES[d.getMonth()]} {d.getDate()}, {d.getFullYear()}
+          {MONTH_NAMES[d.getMonth()]} {d.getDate()}
         </h3>
-        <button onClick={onNewEvent} style={{ ...btnStyle, padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}>
+        <button onClick={onNewEvent} style={{ ...btnStyle, padding: '0.375rem 0.75rem', fontSize: '0.8rem',
+          minHeight: 36 }}>
           + Event
         </button>
       </div>
@@ -385,15 +468,15 @@ function DaySidebar({ date, events, onEventClick, onNewEvent }: {
           {dayEvents.map(ev => (
             <button key={ev.id} onClick={() => onEventClick(ev)}
               style={{
-                display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.375rem 0.5rem',
+                display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem',
                 background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer', textAlign: 'left', width: '100%',
+                cursor: 'pointer', textAlign: 'left', width: '100%', minHeight: 44,
               }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: ev.color, flexShrink: 0 }} />
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: ev.color, flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--ink)',
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)',
                   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
                   {formatTimeRange(ev.startTime, ev.endTime)}
                   {ev.isBooking && ev.bookedByName && <> &middot; {ev.bookedByName}</>}
                   {ev.recurrence && ev.recurrence !== 'none' && (
@@ -411,8 +494,9 @@ function DaySidebar({ date, events, onEventClick, onNewEvent }: {
 
 // ---- Booking Settings ----
 
-function BookingSettings({ config, onChange, userId }: {
+function BookingSettings({ config, onChange, userId, isMobile }: {
   config: BookingConfig, onChange: (c: BookingConfig) => void, userId?: string
+  isMobile: boolean
 }) {
   const bookingUrl = userId
     ? `${location.origin}${location.pathname}#/book/${userId}`
@@ -450,13 +534,13 @@ function BookingSettings({ config, onChange, userId }: {
         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Enable Booking Page</label>
         <button onClick={() => onChange({ ...config, enabled: !config.enabled })}
           style={{
-            width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
+            width: 44, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer',
             background: config.enabled ? 'var(--accent)' : 'var(--line-strong)',
             position: 'relative', transition: 'background 160ms',
           }}>
           <span style={{
-            position: 'absolute', top: 2, left: config.enabled ? 20 : 2,
-            width: 18, height: 18, borderRadius: '50%', background: '#fff',
+            position: 'absolute', top: 3, left: config.enabled ? 21 : 3,
+            width: 20, height: 20, borderRadius: '50%', background: '#fff',
             transition: 'left 160ms',
           }} />
         </button>
@@ -466,15 +550,16 @@ function BookingSettings({ config, onChange, userId }: {
         <>
           {bookingUrl && (
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <input style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} value={bookingUrl} readOnly />
-              <button onClick={copyUrl} style={{ ...btnOutline, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+              <input style={{ ...inputStyle, flex: 1, fontSize: '0.8rem' }} value={bookingUrl} readOnly />
+              <button onClick={copyUrl} style={{ ...btnOutline, fontSize: '0.8rem', whiteSpace: 'nowrap',
+                minHeight: 44 }}>
                 {copied ? 'Copied!' : 'Copy'}
               </button>
             </div>
           )}
 
           {!userId && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--warning)', margin: 0 }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--warning)', margin: 0 }}>
               Sign in to generate your booking link.
             </p>
           )}
@@ -524,25 +609,36 @@ function BookingSettings({ config, onChange, userId }: {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
               <label style={{ ...labelStyle, marginBottom: 0 }}>Availability</label>
-              <button onClick={addSlot} style={{ ...btnOutline, padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}>+ Add</button>
+              <button onClick={addSlot} style={{ ...btnOutline, padding: '0.3rem 0.625rem', fontSize: '0.75rem',
+                minHeight: 32 }}>+ Add</button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {config.availability.map((slot, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                  <select style={{ ...inputStyle, width: 'auto', flex: 1 }} value={slot.day}
-                    onChange={e => updateSlot(i, 'day', Number(e.target.value))}>
-                    {DAY_NAMES_FULL.map((name, d) => <option key={d} value={d}>{name}</option>)}
-                  </select>
-                  <input style={{ ...inputStyle, width: 'auto' }} type="time" value={slot.startTime}
-                    onChange={e => updateSlot(i, 'startTime', e.target.value)} />
-                  <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>to</span>
-                  <input style={{ ...inputStyle, width: 'auto' }} type="time" value={slot.endTime}
-                    onChange={e => updateSlot(i, 'endTime', e.target.value)} />
-                  <button onClick={() => removeSlot(i)}
-                    style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer',
-                      fontSize: '1rem', padding: '0 0.25rem' }}>
-                    &times;
-                  </button>
+                <div key={i} style={{
+                  display: 'flex', flexDirection: isMobile ? 'column' : 'row',
+                  alignItems: isMobile ? 'stretch' : 'center', gap: '0.375rem',
+                  padding: isMobile ? '0.5rem' : 0,
+                  background: isMobile ? 'var(--panel-quiet)' : 'transparent',
+                  borderRadius: isMobile ? 'var(--radius-sm)' : 0,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                    <select style={{ ...inputStyle, width: 'auto', flex: 1 }} value={slot.day}
+                      onChange={e => updateSlot(i, 'day', Number(e.target.value))}>
+                      {(isMobile ? DAY_NAMES : DAY_NAMES_FULL).map((name, d) => <option key={d} value={d}>{isMobile ? DAY_NAMES_FULL[d] : name}</option>)}
+                    </select>
+                    <button onClick={() => removeSlot(i)}
+                      style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer',
+                        fontSize: '1.2rem', padding: '0.25rem', minWidth: 32, minHeight: 32 }}>
+                      &times;
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                    <input style={{ ...inputStyle, width: 'auto', flex: 1 }} type="time" value={slot.startTime}
+                      onChange={e => updateSlot(i, 'startTime', e.target.value)} />
+                    <span style={{ color: 'var(--muted)', fontSize: '0.75rem', flexShrink: 0 }}>to</span>
+                    <input style={{ ...inputStyle, width: 'auto', flex: 1 }} type="time" value={slot.endTime}
+                      onChange={e => updateSlot(i, 'endTime', e.target.value)} />
+                  </div>
                 </div>
               ))}
             </div>
@@ -570,16 +666,13 @@ function BookingPage({ userId }: { userId: string }) {
   useEffect(() => {
     const load = async () => {
       try {
-        // Read the published booking page config (public read, owned by userId)
         const result = await bookingPages.query({ owner: userId, limit: 1 })
         if (result.documents.length > 0) {
           const doc = result.documents[0] as Record<string, unknown>
           setConfig(doc.config as BookingConfig)
           setBlockedSlots((doc.blockedSlots as typeof blockedSlots) || [])
         }
-      } catch {
-        // Collection not accessible
-      }
+      } catch {}
       setLoading(false)
     }
     load()
@@ -596,10 +689,10 @@ function BookingPage({ userId }: { userId: string }) {
   if (!config || !config.enabled) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100dvh', flexDirection: 'column', gap: '0.5rem' }}>
+        minHeight: '100dvh', flexDirection: 'column', gap: '0.5rem', padding: '1.5rem' }}>
         <h2 style={{ fontWeight: 700, fontSize: '1.25rem' }}>Booking Unavailable</h2>
-        <p style={{ color: 'var(--muted)' }}>This booking page is not currently active.</p>
-        <button onClick={() => { location.hash = '' }} style={btnOutline}>Go to Calendar</button>
+        <p style={{ color: 'var(--muted)', textAlign: 'center' }}>This booking page is not currently active.</p>
+        <button onClick={() => { location.hash = '' }} style={{ ...btnOutline, minHeight: 44 }}>Go to Calendar</button>
       </div>
     )
   }
@@ -614,7 +707,6 @@ function BookingPage({ userId }: { userId: string }) {
     d = addDays(d, 1)
   }
 
-  // Convert blocked slots to event-like objects for slot generation
   const blockedEvents: CalendarEvent[] = blockedSlots.map((s, i) => ({
     id: `blocked-${i}`, title: '', date: s.date,
     startTime: s.startTime, endTime: s.endTime, color: '',
@@ -632,9 +724,7 @@ function BookingPage({ userId }: { userId: string }) {
         startTime: selectedSlot,
         endTime: minutesToTime(timeToMinutes(selectedSlot) + config.slotDuration),
       })
-    } catch {
-      // Best-effort
-    }
+    } catch {}
     setBooked(true)
   }
 
@@ -650,7 +740,7 @@ function BookingPage({ userId }: { userId: string }) {
         <p style={{ color: 'var(--muted)', textAlign: 'center', maxWidth: 320 }}>
           Your booking on {parseDate(selectedDate!).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} at {formatTime(selectedSlot!)} has been confirmed.
         </p>
-        <button onClick={() => { location.hash = '' }} style={btnOutline}>Go to Calendar</button>
+        <button onClick={() => { location.hash = '' }} style={{ ...btnOutline, minHeight: 44 }}>Go to Calendar</button>
       </div>
     )
   }
@@ -665,22 +755,23 @@ function BookingPage({ userId }: { userId: string }) {
       </p>
 
       <label style={labelStyle}>Pick a date</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginBottom: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))',
+        gap: '0.375rem', marginBottom: '1rem' }}>
         {availableDates.slice(0, 21).map(ds => {
           const dd = parseDate(ds)
           const isSelected = ds === selectedDate
           return (
             <button key={ds} onClick={() => { setSelectedDate(ds); setSelectedSlot(null) }}
               style={{
-                padding: '0.375rem 0.625rem', borderRadius: 'var(--radius-sm)',
+                padding: '0.5rem 0.25rem', borderRadius: 'var(--radius-sm)',
                 border: isSelected ? '2px solid var(--accent)' : '1px solid var(--line-strong)',
                 background: isSelected ? 'var(--accent-soft)' : 'var(--panel)',
-                cursor: 'pointer', textAlign: 'center', minWidth: 60,
+                cursor: 'pointer', textAlign: 'center', minHeight: 56,
               }}>
-              <div style={{ fontSize: '0.6rem', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase' }}>
                 {DAY_NAMES[dd.getDay()]}
               </div>
-              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--ink)' }}>
                 {dd.getDate()}
               </div>
               <div style={{ fontSize: '0.6rem', color: 'var(--muted)' }}>
@@ -695,16 +786,16 @@ function BookingPage({ userId }: { userId: string }) {
         <>
           <label style={labelStyle}>Pick a time</label>
           {slots.length === 0 ? (
-            <p style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>No available slots on this day.</p>
+            <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>No available slots on this day.</p>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.375rem', marginBottom: '1rem' }}>
               {slots.map(s => (
                 <button key={s} onClick={() => setSelectedSlot(s)}
                   style={{
-                    padding: '0.5rem', borderRadius: 'var(--radius-sm)',
+                    padding: '0.625rem 0.25rem', borderRadius: 'var(--radius-sm)',
                     border: s === selectedSlot ? '2px solid var(--accent)' : '1px solid var(--line-strong)',
                     background: s === selectedSlot ? 'var(--accent-soft)' : 'var(--panel)',
-                    cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500,
+                    cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, minHeight: 44,
                   }}>
                   {formatTime(s)}
                 </button>
@@ -721,12 +812,14 @@ function BookingPage({ userId }: { userId: string }) {
               <p style={{ fontSize: '0.85rem', margin: 0 }}>
                 Booking as <strong>{user.login}</strong>
               </p>
-              <button onClick={handleBook} style={{ ...btnStyle, padding: '0.75rem', fontSize: '0.9rem' }}>
+              <button onClick={handleBook} style={{ ...btnStyle, padding: '0.875rem', fontSize: '1rem',
+                minHeight: 48 }}>
                 Confirm Booking
               </button>
             </>
           ) : (
-            <button onClick={signIn} style={{ ...btnStyle, padding: '0.75rem', fontSize: '0.9rem' }}>
+            <button onClick={signIn} style={{ ...btnStyle, padding: '0.875rem', fontSize: '1rem',
+              minHeight: 48 }}>
               Sign in with GitHub to book
             </button>
           )}
@@ -756,6 +849,7 @@ export default function App() {
 
 function CalendarApp() {
   const { user } = useAuth(fas)
+  const isMobile = useIsMobile()
   const today = new Date()
   const [events, setEvents] = useState<CalendarEvent[]>(loadEvents)
   const [view, setView] = useState<ViewMode>('month')
@@ -800,13 +894,11 @@ function CalendarApp() {
           setBookingConfig(JSON.parse(cfgRaw as string))
         }
 
-        // Check for existing booking page doc
         const existing = await bookingPages.query({ owner: user.id, limit: 1 })
         if (existing.documents.length > 0) {
           setBookingPageDocId(existing.documents[0].id)
         }
 
-        // Pull in any new bookings from guests (query all, filter by hostUserId)
         const guestBookings = await bookings.query({ limit: 100 })
         const myBookings = guestBookings.documents.filter(
           (b: Record<string, unknown>) => b.hostUserId === user.id
@@ -842,7 +934,6 @@ function CalendarApp() {
       fas.kv.set('events', JSON.stringify(events)).catch(() => {})
       fas.kv.set('booking_config', JSON.stringify(bookingConfig)).catch(() => {})
 
-      // Publish booking page to collections for public read
       if (bookingConfig.enabled) {
         const blockedSlots = events.map(e => ({
           date: e.date, startTime: e.startTime, endTime: e.endTime,
@@ -865,26 +956,49 @@ function CalendarApp() {
     setSelectedDate(toDateStr(t))
   }
 
-  const navigate = (dir: -1 | 1) => {
+  const navigateForward = useCallback(() => {
     if (view === 'month') {
-      const nm = month + dir
-      if (nm < 0) { setMonth(11); setYear(y => y - 1) }
-      else if (nm > 11) { setMonth(0); setYear(y => y + 1) }
-      else setMonth(nm)
+      setMonth(m => {
+        if (m >= 11) { setYear(y => y + 1); return 0 }
+        return m + 1
+      })
     } else if (view === 'week') {
-      const d = parseDate(selectedDate)
-      const nd = addDays(d, dir * 7)
-      setSelectedDate(toDateStr(nd))
-      setYear(nd.getFullYear())
-      setMonth(nd.getMonth())
+      setSelectedDate(prev => {
+        const nd = addDays(parseDate(prev), 7)
+        setYear(nd.getFullYear()); setMonth(nd.getMonth())
+        return toDateStr(nd)
+      })
     } else {
-      const d = parseDate(selectedDate)
-      const nd = addDays(d, dir)
-      setSelectedDate(toDateStr(nd))
-      setYear(nd.getFullYear())
-      setMonth(nd.getMonth())
+      setSelectedDate(prev => {
+        const nd = addDays(parseDate(prev), 1)
+        setYear(nd.getFullYear()); setMonth(nd.getMonth())
+        return toDateStr(nd)
+      })
     }
-  }
+  }, [view])
+
+  const navigateBack = useCallback(() => {
+    if (view === 'month') {
+      setMonth(m => {
+        if (m <= 0) { setYear(y => y - 1); return 11 }
+        return m - 1
+      })
+    } else if (view === 'week') {
+      setSelectedDate(prev => {
+        const nd = addDays(parseDate(prev), -7)
+        setYear(nd.getFullYear()); setMonth(nd.getMonth())
+        return toDateStr(nd)
+      })
+    } else {
+      setSelectedDate(prev => {
+        const nd = addDays(parseDate(prev), -1)
+        setYear(nd.getFullYear()); setMonth(nd.getMonth())
+        return toDateStr(nd)
+      })
+    }
+  }, [view])
+
+  const swipeRef = useSwipe(navigateForward, navigateBack)
 
   const handleSelectDate = useCallback((d: string) => {
     setSelectedDate(d)
@@ -931,12 +1045,14 @@ function CalendarApp() {
           const d = parseDate(selectedDate)
           const weekStart = startOfWeek(d)
           const weekEnd = addDays(weekStart, 6)
+          if (isMobile) return `${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getDate()}`
           return `${MONTH_NAMES[weekStart.getMonth()]} ${weekStart.getDate()} - ${
             weekEnd.getMonth() !== weekStart.getMonth() ? MONTH_NAMES[weekEnd.getMonth()] + ' ' : ''
           }${weekEnd.getDate()}, ${weekEnd.getFullYear()}`
         })()
       : (() => {
           const d = parseDate(selectedDate)
+          if (isMobile) return `${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getDate()}`
           return `${DAY_NAMES_FULL[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
         })()
 
@@ -945,52 +1061,93 @@ function CalendarApp() {
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         {/* Toolbar */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem',
-          borderBottom: '1px solid var(--line)', flexWrap: 'wrap',
+          display: 'flex', flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? '0.25rem' : '0.5rem',
+          padding: isMobile ? '0.375rem 0.5rem' : '0.5rem 0.75rem',
+          borderBottom: '1px solid var(--line)',
         }}>
-          <button onClick={goToday} style={{ ...btnOutline, padding: '0.3rem 0.625rem', fontSize: '0.75rem' }}>
-            Today
-          </button>
-          <div style={{ display: 'flex', gap: 2 }}>
-            <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none',
-              cursor: 'pointer', fontSize: '1.1rem', color: 'var(--ink)', padding: '0.25rem' }}>&lsaquo;</button>
-            <button onClick={() => navigate(1)} style={{ background: 'none', border: 'none',
-              cursor: 'pointer', fontSize: '1.1rem', color: 'var(--ink)', padding: '0.25rem' }}>&rsaquo;</button>
+          {/* Row 1: Navigation */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flex: 1 }}>
+            <button onClick={goToday} style={{ ...btnOutline, padding: '0.3rem 0.5rem', fontSize: '0.75rem',
+              minHeight: 36 }}>
+              Today
+            </button>
+            <button onClick={navigateBack} style={{ background: 'none', border: 'none',
+              cursor: 'pointer', fontSize: '1.25rem', color: 'var(--ink)', padding: '0.25rem',
+              minWidth: 36, minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>&lsaquo;</button>
+            <button onClick={navigateForward} style={{ background: 'none', border: 'none',
+              cursor: 'pointer', fontSize: '1.25rem', color: 'var(--ink)', padding: '0.25rem',
+              minWidth: 36, minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>&rsaquo;</button>
+            <h2 className="display-font" style={{
+              fontSize: isMobile ? '1rem' : '1.1rem', fontWeight: 700, margin: 0, flex: 1,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {headerLabel}
+            </h2>
+            {!isMobile && (
+              <>
+                <button onClick={() => setShowBookingSettings(!showBookingSettings)}
+                  style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.625rem',
+                    fontSize: '0.75rem' }}>
+                  Booking
+                </button>
+                <button onClick={handleNewEvent} style={{ ...btnStyle, padding: '0.3rem 0.625rem',
+                  fontSize: '0.75rem' }}>
+                  + Event
+                </button>
+              </>
+            )}
           </div>
-          <h2 className="display-font" style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, flex: 1 }}>
-            {headerLabel}
-          </h2>
-          <Tabs
-            tabs={[{ key: 'month', label: 'Month' }, { key: 'week', label: 'Week' }, { key: 'day', label: 'Day' }]}
-            active={view}
-            onChange={k => setView(k as ViewMode)}
-          />
-          <button onClick={() => setShowBookingSettings(!showBookingSettings)}
-            style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.625rem', fontSize: '0.75rem' }}>
-            Booking
-          </button>
-          <button onClick={handleNewEvent} style={{ ...btnStyle, padding: '0.3rem 0.625rem', fontSize: '0.75rem' }}>
-            + Event
-          </button>
+          {/* Row 2: View tabs + actions (mobile) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+            <div style={{ flex: 1 }}>
+              <Tabs
+                tabs={[{ key: 'month', label: isMobile ? 'Mo' : 'Month' },
+                       { key: 'week', label: isMobile ? 'Wk' : 'Week' },
+                       { key: 'day', label: isMobile ? 'Dy' : 'Day' }]}
+                active={view}
+                onChange={k => setView(k as ViewMode)}
+              />
+            </div>
+            {isMobile && (
+              <>
+                <button onClick={() => setShowBookingSettings(!showBookingSettings)}
+                  style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.5rem',
+                    fontSize: '0.7rem', minHeight: 32 }}>
+                  Book
+                </button>
+                <button onClick={handleNewEvent} style={{ ...btnStyle, padding: '0.3rem 0.5rem',
+                  fontSize: '0.7rem', minHeight: 32 }}>
+                  +
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Main content */}
         {showBookingSettings ? (
-          <BookingSettings config={bookingConfig} onChange={setBookingConfig} userId={user?.id} />
+          <BookingSettings config={bookingConfig} onChange={setBookingConfig} userId={user?.id}
+            isMobile={isMobile} />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: view === 'month' ? '0.25rem' : 0 }}>
+          <div ref={swipeRef} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0,
+              padding: view === 'month' ? (isMobile ? '0.125rem' : '0.25rem') : 0 }}>
               {view === 'month' && (
                 <MonthView year={year} month={month} events={events}
                   selectedDate={selectedDate} onSelectDate={handleSelectDate}
-                  onEventClick={handleEventClick} />
+                  onEventClick={handleEventClick} isMobile={isMobile} />
               )}
               {view === 'week' && (
                 <WeekView dateStr={selectedDate} events={events}
-                  onSelectDate={handleSelectDate} onEventClick={handleEventClick} />
+                  onSelectDate={handleSelectDate} onEventClick={handleEventClick}
+                  isMobile={isMobile} />
               )}
               {view === 'day' && (
-                <DayView date={selectedDate} events={events} onEventClick={handleEventClick} />
+                <DayView date={selectedDate} events={events} onEventClick={handleEventClick}
+                  isMobile={isMobile} />
               )}
             </div>
             {(view === 'month' || view === 'week') && (
