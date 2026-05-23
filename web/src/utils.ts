@@ -117,12 +117,23 @@ export function generateTimeSlots(
   const dayEvents = getEventsForDate(existingEvents, dateStr)
   const slots: string[] = []
 
+  // If the date is today, filter out past time slots
+  const now = new Date()
+  const isToday = toDateStr(now) === dateStr
+  const nowMin = isToday ? now.getHours() * 60 + now.getMinutes() : 0
+
   for (const slot of daySlots) {
     const startMin = timeToMinutes(slot.startTime)
     const endMin = timeToMinutes(slot.endTime)
     let current = startMin
 
     while (current + config.slotDuration <= endMin) {
+      // Skip slots that have already passed today
+      if (isToday && current < nowMin) {
+        current += config.slotDuration + config.bufferTime
+        continue
+      }
+
       const slotStart = minutesToTime(current)
 
       // Check for conflicts with existing events

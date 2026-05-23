@@ -122,10 +122,14 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) return
+    // Auto-fix end time if before start time
+    const fixedEnd = timeToMinutes(endTime) <= timeToMinutes(startTime)
+      ? minutesToTime(timeToMinutes(startTime) + 60)
+      : endTime
     onSave({
       id: event?.id || generateId(),
       title: title.trim(),
-      date, startTime, endTime, color, description, recurrence,
+      date, startTime, endTime: fixedEnd, color, description, recurrence,
     })
   }
 
@@ -959,8 +963,15 @@ function CalendarApp() {
   const navigateForward = useCallback(() => {
     if (view === 'month') {
       setMonth(m => {
-        if (m >= 11) { setYear(y => y + 1); return 0 }
-        return m + 1
+        const newM = m >= 11 ? 0 : m + 1
+        if (m >= 11) setYear(y => y + 1)
+        setSelectedDate(prev => {
+          const prevDay = parseDate(prev).getDate()
+          const newY = m >= 11 ? year + 1 : year
+          const maxDay = new Date(newY, newM + 1, 0).getDate()
+          return toDateStr(new Date(newY, newM, Math.min(prevDay, maxDay)))
+        })
+        return newM
       })
     } else if (view === 'week') {
       setSelectedDate(prev => {
@@ -975,13 +986,20 @@ function CalendarApp() {
         return toDateStr(nd)
       })
     }
-  }, [view])
+  }, [view, year])
 
   const navigateBack = useCallback(() => {
     if (view === 'month') {
       setMonth(m => {
-        if (m <= 0) { setYear(y => y - 1); return 11 }
-        return m - 1
+        const newM = m <= 0 ? 11 : m - 1
+        if (m <= 0) setYear(y => y - 1)
+        setSelectedDate(prev => {
+          const prevDay = parseDate(prev).getDate()
+          const newY = m <= 0 ? year - 1 : year
+          const maxDay = new Date(newY, newM + 1, 0).getDate()
+          return toDateStr(new Date(newY, newM, Math.min(prevDay, maxDay)))
+        })
+        return newM
       })
     } else if (view === 'week') {
       setSelectedDate(prev => {
@@ -996,7 +1014,7 @@ function CalendarApp() {
         return toDateStr(nd)
       })
     }
-  }, [view])
+  }, [view, year])
 
   const swipeRef = useSwipe(navigateForward, navigateBack)
 
