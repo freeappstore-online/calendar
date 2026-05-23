@@ -1,15 +1,15 @@
 {
-  "name": "APPNAME",
+  "name": "calendar",
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "engines": { "node": ">=22" },
   "pnpm": { "onlyBuiltDependencies": ["esbuild"] },
-  "repository": { "type": "git", "url": "git+https://github.com/freeappstore-online/APPNAME.git" },
+  "repository": { "type": "git", "url": "git+https://github.com/freeappstore-online/calendar.git" },
   "scripts": {
-    "dev": "pnpm --filter @APPNAME/web dev",
-    "build": "pnpm --filter @APPNAME/web build",
-    "preview": "pnpm --filter @APPNAME/web preview",
-    "typecheck": "pnpm --filter @APPNAME/web exec tsc -b",
-    "test": "pnpm --filter @APPNAME/web exec tsc -b"
+    "dev": "pnpm --filter @calendar/web dev",
+    "build": "pnpm --filter @calendar/web build",
+    "preview": "pnpm --filter @calendar/web preview",
+    "typecheck": "pnpm --filter @calendar/web exec tsc -b",
+    "test": "pnpm --filter @calendar/web exec tsc -b"
   }
 }

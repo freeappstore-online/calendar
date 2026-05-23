@@ -34,9 +34,9 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: 'APPNAME',
-        short_name: 'APPNAME',
-        description: 'Free APPNAME app — part of FreeAppStore',
+        name: 'calendar',
+        short_name: 'calendar',
+        description: 'Free calendar app — part of FreeAppStore',
         start_url: '/',
         display: 'standalone',
         background_color: '#ffffff',
