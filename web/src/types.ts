@@ -1,3 +1,10 @@
+export interface Attendee {
+  userId: string
+  login: string
+  avatarUrl?: string | null
+  status: 'pending' | 'accepted' | 'declined'
+}
+
 export interface CalendarEvent {
   id: string
   title: string
@@ -6,10 +13,28 @@ export interface CalendarEvent {
   endTime: string     // HH:MM
   color: string
   description?: string
+  location?: string   // URL (Zoom/Meet/Teams) or physical address
+  attendees?: Attendee[]
   isBooking?: boolean
   bookedBy?: string
   bookedByName?: string
   recurrence?: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+}
+
+export interface Invitation {
+  id: string          // collection doc id
+  eventId: string
+  eventTitle: string
+  eventDate: string
+  eventStartTime: string
+  eventEndTime: string
+  eventLocation?: string
+  eventColor: string
+  hostId: string
+  hostLogin: string
+  hostAvatar?: string | null
+  inviteeId: string
+  status: 'pending' | 'accepted' | 'declined'
 }
 
 export interface AvailabilitySlot {
@@ -37,3 +62,20 @@ export const EVENT_COLORS: string[] = [
 export const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
 export const DAY_NAMES_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
 export const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] as const
+
+export const MEETING_LINK_PATTERNS: [RegExp, string][] = [
+  [/zoom\.us\/j\//i, 'Zoom'],
+  [/meet\.google\.com\//i, 'Google Meet'],
+  [/teams\.microsoft\.com\//i, 'Teams'],
+  [/whereby\.com\//i, 'Whereby'],
+  [/webex\.com\//i, 'Webex'],
+  [/cal\.com\//i, 'Cal.com'],
+  [/^https?:\/\//i, 'Link'],
+]
+
+export function detectMeetingPlatform(url: string): string | null {
+  for (const [re, name] of MEETING_LINK_PATTERNS) {
+    if (re.test(url)) return name
+  }
+  return null
+}

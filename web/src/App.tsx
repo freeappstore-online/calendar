@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { initApp } from '@freeappstore/sdk'
 import { FasShell, BuildInfo, Modal, Tabs } from '@freeappstore/sdk/ui'
 import { useAuth } from '@freeappstore/sdk/hooks'
-import type { CalendarEvent, ViewMode, BookingConfig, AvailabilitySlot } from './types'
-import { EVENT_COLORS, DAY_NAMES, DAY_NAMES_FULL, MONTH_NAMES } from './types'
+import type { CalendarEvent, ViewMode, BookingConfig, AvailabilitySlot, Invitation, Attendee } from './types'
+import { EVENT_COLORS, DAY_NAMES, DAY_NAMES_FULL, MONTH_NAMES, detectMeetingPlatform } from './types'
 import {
   toDateStr, parseDate, addDays, startOfWeek, getMonthGrid, getWeekDays,
   timeToMinutes, minutesToTime, formatTime, formatTimeRange, HOURS,
@@ -86,6 +86,33 @@ function SignInButtons({ label }: { label?: string }) {
   )
 }
 
+// ---- Meeting link display ----
+
+function MeetingLink({ url }: { url: string }) {
+  const platform = detectMeetingPlatform(url)
+  if (!platform) return <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{url}</span>
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      onClick={e => e.stopPropagation()}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+        fontSize: '0.75rem', color: 'var(--sky)', fontWeight: 500,
+        textDecoration: 'none',
+      }}>
+      {platform === 'Zoom' && '📹'}
+      {platform === 'Google Meet' && '📹'}
+      {platform === 'Teams' && '📹'}
+      {platform === 'Link' && '🔗'}
+      {!['Zoom', 'Google Meet', 'Teams', 'Link'].includes(platform) && '📹'}
+      {' '}{platform}
+    </a>
+  )
+}
+
+// ---- Invitations collection ----
+
+const invitesCollection = fas.collections.collection('calendar_invites')
+
 // ---- Shared styles ----
 
 const inputStyle: React.CSSProperties = {
@@ -109,13 +136,14 @@ const labelStyle: React.CSSProperties = {
 
 // ---- Event Form Modal ----
 
-function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
+function EventModal({ open, onClose, onSave, onDelete, event, defaultDate, user }: {
   open: boolean
   onClose: () => void
   onSave: (e: CalendarEvent) => void
   onDelete?: () => void
   event?: CalendarEvent | null
   defaultDate: string
+  user: { id: string; login: string; avatarUrl: string | null } | null
 }) {
   const [title, setTitle] = useState('')
   const [date, setDate] = useState(defaultDate)
@@ -123,7 +151,10 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
   const [endTime, setEndTime] = useState('10:00')
   const [color, setColor] = useState(EVENT_COLORS[0])
   const [description, setDescription] = useState('')
+  const [location, setLocation] = useState('')
   const [recurrence, setRecurrence] = useState<CalendarEvent['recurrence']>('none')
+  const [attendeeInput, setAttendeeInput] = useState('')
+  const [attendees, setAttendees] = useState<Attendee[]>([])
 
   useEffect(() => {
     if (event) {
@@ -133,7 +164,10 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
       setEndTime(event.endTime)
       setColor(event.color)
       setDescription(event.description || '')
+      setLocation(event.location || '')
       setRecurrence(event.recurrence || 'none')
+      setAttendees(event.attendees || [])
+      setAttendeeInput('')
     } else {
       setTitle('')
       setDate(defaultDate)
@@ -141,21 +175,39 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
       setEndTime('10:00')
       setColor(EVENT_COLORS[Math.floor(Math.random() * EVENT_COLORS.length)])
       setDescription('')
+      setLocation('')
       setRecurrence('none')
+      setAttendees([])
+      setAttendeeInput('')
     }
   }, [event, defaultDate, open])
+
+  const addAttendee = () => {
+    const login = attendeeInput.trim().replace(/^@/, '')
+    if (!login) return
+    if (user && login === user.login) return // can't invite yourself
+    if (attendees.some(a => a.login === login)) return // already added
+    setAttendees(prev => [...prev, { userId: '', login, status: 'pending' }])
+    setAttendeeInput('')
+  }
+
+  const removeAttendee = (login: string) => {
+    setAttendees(prev => prev.filter(a => a.login !== login))
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) return
-    // Auto-fix end time if before start time
     const fixedEnd = timeToMinutes(endTime) <= timeToMinutes(startTime)
       ? minutesToTime(timeToMinutes(startTime) + 60)
       : endTime
     onSave({
       id: event?.id || generateId(),
       title: title.trim(),
-      date, startTime, endTime: fixedEnd, color, description, recurrence,
+      date, startTime, endTime: fixedEnd, color, description,
+      location: location.trim() || undefined,
+      attendees: attendees.length > 0 ? attendees : undefined,
+      recurrence,
     })
   }
 
@@ -181,6 +233,49 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate }: {
             <input style={inputStyle} type="time" value={endTime} onChange={e => setEndTime(e.target.value)} required />
           </div>
         </div>
+        <div>
+          <label style={labelStyle}>Location / Meeting Link</label>
+          <input style={inputStyle} value={location} onChange={e => setLocation(e.target.value)}
+            placeholder="https://meet.google.com/... or Room 401" />
+          {location && detectMeetingPlatform(location) && (
+            <div style={{ marginTop: 4 }}><MeetingLink url={location} /></div>
+          )}
+        </div>
+        {user && (
+          <div>
+            <label style={labelStyle}>Attendees</label>
+            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: attendees.length > 0 ? '0.375rem' : 0 }}>
+              <input style={{ ...inputStyle, flex: 1 }} value={attendeeInput}
+                onChange={e => setAttendeeInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addAttendee() } }}
+                placeholder="Username" />
+              <button type="button" onClick={addAttendee}
+                style={{ ...btnOutline, padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}>Add</button>
+            </div>
+            {attendees.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                {attendees.map(a => (
+                  <span key={a.login} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                    padding: '0.2rem 0.5rem', borderRadius: 99, fontSize: '0.75rem',
+                    background: a.status === 'accepted' ? 'var(--mint-soft)' :
+                      a.status === 'declined' ? 'var(--accent-soft)' : 'var(--surface-2)',
+                    color: 'var(--ink)',
+                  }}>
+                    @{a.login}
+                    {a.status === 'accepted' && ' ✓'}
+                    {a.status === 'declined' && ' ✗'}
+                    <button type="button" onClick={() => removeAttendee(a.login)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer',
+                        color: 'var(--muted)', fontSize: '0.8rem', padding: 0, lineHeight: 1 }}>
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <label style={labelStyle}>Color</label>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -514,6 +609,14 @@ function DaySidebar({ date, events, onEventClick, onNewEvent, user }: {
                     <span style={{ marginLeft: 4, opacity: 0.7 }}>&#x21bb; {ev.recurrence}</span>
                   )}
                 </div>
+                {ev.location && (
+                  <div style={{ marginTop: 2 }}><MeetingLink url={ev.location} /></div>
+                )}
+                {ev.attendees && ev.attendees.length > 0 && (
+                  <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: 2 }}>
+                    {ev.attendees.map(a => `@${a.login}`).join(', ')}
+                  </div>
+                )}
               </div>
             </button>
           ))}
@@ -862,6 +965,64 @@ function BookingPage({ userId }: { userId: string }) {
   )
 }
 
+// ---- Invitations Inbox ----
+
+function InvitationsInbox({ invitations, onRespond }: {
+  invitations: Invitation[]
+  onRespond: (id: string, status: 'accepted' | 'declined') => void
+}) {
+  const pending = invitations.filter(i => i.status === 'pending')
+  if (pending.length === 0) {
+    return (
+      <div style={{ padding: '2rem 1rem', textAlign: 'center', flex: 1 }}>
+        <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No pending invitations</p>
+      </div>
+    )
+  }
+  return (
+    <div style={{ padding: '0.75rem', overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      {pending.map(inv => (
+        <div key={inv.id} style={{
+          padding: '0.75rem', borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--line)', background: 'var(--panel)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
+            {inv.hostAvatar && (
+              <img src={inv.hostAvatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%' }} />
+            )}
+            <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+              <strong style={{ color: 'var(--ink)' }}>@{inv.hostLogin}</strong> invited you
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.25rem' }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: inv.eventColor, flexShrink: 0 }} />
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{inv.eventTitle}</span>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>
+            {parseDate(inv.eventDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' '}{formatTime(inv.eventStartTime)} - {formatTime(inv.eventEndTime)}
+            {inv.eventLocation && (
+              <div style={{ marginTop: 2 }}><MeetingLink url={inv.eventLocation} /></div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '0.375rem' }}>
+            <button onClick={() => onRespond(inv.id, 'accepted')}
+              style={{ ...btnStyle, padding: '0.375rem 0.75rem', fontSize: '0.8rem', flex: 1,
+                background: 'var(--mint)', minHeight: 36 }}>
+              Accept
+            </button>
+            <button onClick={() => onRespond(inv.id, 'declined')}
+              style={{ ...btnOutline, padding: '0.375rem 0.75rem', fontSize: '0.8rem', flex: 1,
+                minHeight: 36 }}>
+              Decline
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ---- Main App ----
 
 export default function App() {
@@ -892,6 +1053,8 @@ function CalendarApp() {
   const [showEventModal, setShowEventModal] = useState(false)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
   const [showBookingSettings, setShowBookingSettings] = useState(false)
+  const [showInbox, setShowInbox] = useState(false)
+  const [invitations, setInvitations] = useState<Invitation[]>([])
   const [bookingConfig, setBookingConfig] = useState<BookingConfig>(loadBookingConfig)
 
   // Persist events to localStorage
@@ -951,6 +1114,48 @@ function CalendarApp() {
           setEvents(prev => {
             const existingIds = new Set(prev.map(e => e.id))
             const fresh = newEvents.filter(e => !existingIds.has(e.id))
+            return fresh.length > 0 ? [...prev, ...fresh] : prev
+          })
+        }
+
+        // Fetch invitations for this user
+        const allInvites = await invitesCollection.query({ limit: 100 })
+        const myInvites: Invitation[] = allInvites.documents
+          .filter((d: Record<string, unknown>) => d.inviteeId === user.id || d.inviteeLogin === user.login)
+          .map((d: Record<string, unknown>) => ({
+            id: d.id as string,
+            eventId: d.eventId as string,
+            eventTitle: d.eventTitle as string,
+            eventDate: d.eventDate as string,
+            eventStartTime: d.eventStartTime as string,
+            eventEndTime: d.eventEndTime as string,
+            eventLocation: d.eventLocation as string | undefined,
+            eventColor: (d.eventColor as string) || '#4c97b5',
+            hostId: d.hostId as string,
+            hostLogin: d.hostLogin as string,
+            hostAvatar: d.hostAvatar as string | null,
+            inviteeId: d.inviteeId as string,
+            status: d.status as Invitation['status'],
+          }))
+        setInvitations(myInvites)
+
+        // Auto-add accepted invitations as events
+        const acceptedInvites = myInvites.filter(i => i.status === 'accepted')
+        if (acceptedInvites.length > 0) {
+          setEvents(prev => {
+            const existingIds = new Set(prev.map(e => e.id))
+            const fresh = acceptedInvites
+              .filter(i => !existingIds.has(`inv-${i.id}`))
+              .map(i => ({
+                id: `inv-${i.id}`,
+                title: i.eventTitle,
+                date: i.eventDate,
+                startTime: i.eventStartTime,
+                endTime: i.eventEndTime,
+                color: i.eventColor,
+                location: i.eventLocation,
+                attendees: [{ userId: i.hostId, login: i.hostLogin, avatarUrl: i.hostAvatar, status: 'accepted' as const }],
+              }))
             return fresh.length > 0 ? [...prev, ...fresh] : prev
           })
         }
@@ -1085,6 +1290,59 @@ function CalendarApp() {
     setShowEventModal(true)
   }
 
+  // Send invitations when saving an event with new attendees
+  const handleSaveWithInvites = (ev: CalendarEvent) => {
+    const oldEvent = events.find(e => e.id === ev.id)
+    const oldAttendees = new Set((oldEvent?.attendees || []).map(a => a.login))
+    const newAttendees = (ev.attendees || []).filter(a => !oldAttendees.has(a.login))
+
+    if (user && newAttendees.length > 0) {
+      for (const attendee of newAttendees) {
+        invitesCollection.create({
+          eventId: ev.id,
+          eventTitle: ev.title,
+          eventDate: ev.date,
+          eventStartTime: ev.startTime,
+          eventEndTime: ev.endTime,
+          eventLocation: ev.location || null,
+          eventColor: ev.color,
+          hostId: user.id,
+          hostLogin: user.login,
+          hostAvatar: user.avatarUrl,
+          inviteeLogin: attendee.login,
+          inviteeId: '',
+          status: 'pending',
+        }).catch(() => {})
+      }
+    }
+
+    handleSaveEvent(ev)
+  }
+
+  const handleRespondInvitation = async (invId: string, status: 'accepted' | 'declined') => {
+    try {
+      await invitesCollection.update(invId, { status })
+      setInvitations(prev => prev.map(i => i.id === invId ? { ...i, status } : i))
+      if (status === 'accepted') {
+        const inv = invitations.find(i => i.id === invId)
+        if (inv) {
+          setEvents(prev => [...prev, {
+            id: `inv-${inv.id}`,
+            title: inv.eventTitle,
+            date: inv.eventDate,
+            startTime: inv.eventStartTime,
+            endTime: inv.eventEndTime,
+            color: inv.eventColor,
+            location: inv.eventLocation,
+            attendees: [{ userId: inv.hostId, login: inv.hostLogin, avatarUrl: inv.hostAvatar, status: 'accepted' }],
+          }])
+        }
+      }
+    } catch { /* silent */ }
+  }
+
+  const pendingCount = invitations.filter(i => i.status === 'pending').length
+
   const headerLabel = view === 'month'
     ? `${MONTH_NAMES[month]} ${year}`
     : view === 'week'
@@ -1135,7 +1393,20 @@ function CalendarApp() {
             </h2>
             {!isMobile && (
               <>
-                <button onClick={() => setShowBookingSettings(!showBookingSettings)}
+                {user && (
+                  <button onClick={() => { setShowInbox(!showInbox); setShowBookingSettings(false) }}
+                    style={{ ...(showInbox ? btnStyle : btnOutline), padding: '0.3rem 0.625rem',
+                      fontSize: '0.75rem', position: 'relative' }}>
+                    Inbox
+                    {pendingCount > 0 && (
+                      <span style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16,
+                        borderRadius: '50%', background: 'var(--error)', color: '#fff', fontSize: '0.6rem',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
+                      }}>{pendingCount}</span>
+                    )}
+                  </button>
+                )}
+                <button onClick={() => { setShowBookingSettings(!showBookingSettings); setShowInbox(false) }}
                   style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.625rem',
                     fontSize: '0.75rem' }}>
                   Booking
@@ -1160,7 +1431,20 @@ function CalendarApp() {
             </div>
             {isMobile && (
               <>
-                <button onClick={() => setShowBookingSettings(!showBookingSettings)}
+                {user && (
+                  <button onClick={() => { setShowInbox(!showInbox); setShowBookingSettings(false) }}
+                    style={{ ...(showInbox ? btnStyle : btnOutline), padding: '0.3rem 0.5rem',
+                      fontSize: '0.7rem', minHeight: 32, position: 'relative' }}>
+                    Inbox
+                    {pendingCount > 0 && (
+                      <span style={{ position: 'absolute', top: -4, right: -4, width: 14, height: 14,
+                        borderRadius: '50%', background: 'var(--error)', color: '#fff', fontSize: '0.55rem',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
+                      }}>{pendingCount}</span>
+                    )}
+                  </button>
+                )}
+                <button onClick={() => { setShowBookingSettings(!showBookingSettings); setShowInbox(false) }}
                   style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.5rem',
                     fontSize: '0.7rem', minHeight: 32 }}>
                   Book
@@ -1175,7 +1459,9 @@ function CalendarApp() {
         </div>
 
         {/* Main content */}
-        {showBookingSettings ? (
+        {showInbox ? (
+          <InvitationsInbox invitations={invitations} onRespond={handleRespondInvitation} />
+        ) : showBookingSettings ? (
           <BookingSettings config={bookingConfig} onChange={setBookingConfig} userId={user?.id}
             isMobile={isMobile} />
         ) : (
@@ -1209,9 +1495,10 @@ function CalendarApp() {
       <EventModal
         open={showEventModal}
         onClose={() => { setShowEventModal(false); setEditingEvent(null) }}
-        onSave={handleSaveEvent}
+        onSave={handleSaveWithInvites}
         onDelete={editingEvent ? handleDeleteEvent : undefined}
         event={editingEvent}
+        user={user}
         defaultDate={selectedDate}
       />
       <BuildInfo />
