@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { initApp } from '@freeappstore/sdk'
 import { FasShell, BuildInfo, Modal, Tabs } from '@freeappstore/sdk/ui'
-import { useAuth } from '@freeappstore/sdk/hooks'
+import { useAuth, useFriends } from '@freeappstore/sdk/hooks'
+import type { Friend } from '@freeappstore/sdk'
 import type { CalendarEvent, ViewMode, BookingConfig, AvailabilitySlot, Invitation, Attendee } from './types'
 import { EVENT_COLORS, DAY_NAMES, DAY_NAMES_FULL, MONTH_NAMES, detectMeetingPlatform } from './types'
 import {
@@ -153,8 +154,9 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate, user 
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
   const [recurrence, setRecurrence] = useState<CalendarEvent['recurrence']>('none')
-  const [attendeeInput, setAttendeeInput] = useState('')
   const [attendees, setAttendees] = useState<Attendee[]>([])
+  const [showFriendPicker, setShowFriendPicker] = useState(false)
+  const { friends } = useFriends(fas)
 
   useEffect(() => {
     if (event) {
@@ -167,7 +169,6 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate, user 
       setLocation(event.location || '')
       setRecurrence(event.recurrence || 'none')
       setAttendees(event.attendees || [])
-      setAttendeeInput('')
     } else {
       setTitle('')
       setDate(defaultDate)
@@ -178,17 +179,17 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate, user 
       setLocation('')
       setRecurrence('none')
       setAttendees([])
-      setAttendeeInput('')
     }
+    setShowFriendPicker(false)
   }, [event, defaultDate, open])
 
-  const addAttendee = () => {
-    const login = attendeeInput.trim().replace(/^@/, '')
-    if (!login) return
-    if (user && login === user.login) return // can't invite yourself
-    if (attendees.some(a => a.login === login)) return // already added
-    setAttendees(prev => [...prev, { userId: '', login, status: 'pending' }])
-    setAttendeeInput('')
+  const addFriend = (friend: Friend) => {
+    if (attendees.some(a => a.userId === friend.userId || a.login === friend.login)) return
+    setAttendees(prev => [...prev, {
+      userId: friend.userId, login: friend.login,
+      avatarUrl: friend.avatarUrl, status: 'pending',
+    }])
+    setShowFriendPicker(false)
   }
 
   const removeAttendee = (login: string) => {
@@ -243,36 +244,57 @@ function EventModal({ open, onClose, onSave, onDelete, event, defaultDate, user 
         </div>
         {user && (
           <div>
-            <label style={labelStyle}>Attendees</label>
-            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: attendees.length > 0 ? '0.375rem' : 0 }}>
-              <input style={{ ...inputStyle, flex: 1 }} value={attendeeInput}
-                onChange={e => setAttendeeInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addAttendee() } }}
-                placeholder="Username" />
-              <button type="button" onClick={addAttendee}
-                style={{ ...btnOutline, padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}>Add</button>
-            </div>
+            <label style={labelStyle}>Attendees (friends only)</label>
             {attendees.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginBottom: '0.375rem' }}>
                 {attendees.map(a => (
                   <span key={a.login} style={{
                     display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                    padding: '0.2rem 0.5rem', borderRadius: 99, fontSize: '0.75rem',
+                    padding: '0.25rem 0.5rem', borderRadius: 99, fontSize: '0.8rem',
                     background: a.status === 'accepted' ? 'var(--mint-soft)' :
                       a.status === 'declined' ? 'var(--accent-soft)' : 'var(--surface-2)',
-                    color: 'var(--ink)',
+                    color: 'var(--ink)', minHeight: 28,
                   }}>
-                    @{a.login}
+                    {a.avatarUrl && <img src={a.avatarUrl} alt="" style={{ width: 16, height: 16, borderRadius: '50%' }} />}
+                    {a.login}
                     {a.status === 'accepted' && ' ✓'}
                     {a.status === 'declined' && ' ✗'}
                     <button type="button" onClick={() => removeAttendee(a.login)}
                       style={{ background: 'none', border: 'none', cursor: 'pointer',
-                        color: 'var(--muted)', fontSize: '0.8rem', padding: 0, lineHeight: 1 }}>
+                        color: 'var(--muted)', fontSize: '0.9rem', padding: 0, lineHeight: 1 }}>
                       &times;
                     </button>
                   </span>
                 ))}
               </div>
+            )}
+            {showFriendPicker ? (
+              <div style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
+                maxHeight: 180, overflow: 'auto', background: 'var(--paper)' }}>
+                {friends.filter(f => !attendees.some(a => a.userId === f.userId)).length === 0 ? (
+                  <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--muted)', fontSize: '0.8rem' }}>
+                    {friends.length === 0 ? 'No friends yet. Add friends from the profile menu.' : 'All friends already added.'}
+                  </div>
+                ) : (
+                  friends.filter(f => !attendees.some(a => a.userId === f.userId)).map(f => (
+                    <button key={f.userId} type="button" onClick={() => addFriend(f)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%',
+                        padding: '0.5rem', background: 'none', border: 'none',
+                        borderBottom: '1px solid var(--line)', cursor: 'pointer',
+                        textAlign: 'left', minHeight: 40,
+                      }}>
+                      {f.avatarUrl && <img src={f.avatarUrl} alt="" style={{ width: 24, height: 24, borderRadius: '50%' }} />}
+                      <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--ink)' }}>{f.login}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : (
+              <button type="button" onClick={() => setShowFriendPicker(true)}
+                style={{ ...btnOutline, padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
+                + Add from friends
+              </button>
             )}
           </div>
         )}
