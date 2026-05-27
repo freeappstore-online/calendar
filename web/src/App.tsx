@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+// Part of https://freeappstore.online
 import { initApp } from '@freeappstore/sdk'
 import { FasShell, BuildInfo, Modal, Tabs } from '@freeappstore/sdk/ui'
 import { useAuth, useFriends } from '@freeappstore/sdk/hooks'
