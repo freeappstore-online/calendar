@@ -4,7 +4,7 @@ import { initApp } from '@freeappstore/sdk'
 import { FasShell, BuildInfo, Modal, Tabs } from '@freeappstore/sdk/ui'
 import { useAuth, useFriends } from '@freeappstore/sdk/hooks'
 import type { Friend } from '@freeappstore/sdk'
-import type { CalendarEvent, ViewMode, BookingConfig, AvailabilitySlot, Invitation, Attendee } from './types'
+import type { CalendarEvent, ViewMode, BookingConfig, AvailabilitySlot, Attendee } from './types'
 import { EVENT_COLORS, DAY_NAMES, DAY_NAMES_FULL, MONTH_NAMES, detectMeetingPlatform } from './types'
 import {
   toDateStr, parseDate, addDays, startOfWeek, getMonthGrid, getWeekDays,
@@ -110,10 +110,6 @@ function MeetingLink({ url }: { url: string }) {
     </a>
   )
 }
-
-// ---- Invitations collection ----
-
-const invitesCollection = fas.collections.collection('calendar_invites')
 
 // ---- Shared styles ----
 
@@ -656,12 +652,12 @@ function DaySidebar({ date, events, onEventClick, onNewEvent, user }: {
 
 // ---- Booking Settings ----
 
-function BookingSettings({ config, onChange, userId, isMobile }: {
-  config: BookingConfig, onChange: (c: BookingConfig) => void, userId?: string
-  isMobile: boolean
+function BookingSettings({ config, onChange, pageId, signedIn, isMobile }: {
+  config: BookingConfig, onChange: (c: BookingConfig) => void, pageId: string | null
+  signedIn: boolean, isMobile: boolean
 }) {
-  const bookingUrl = userId
-    ? `${location.origin}${location.pathname}#/book/${userId}`
+  const bookingUrl = pageId
+    ? `${location.origin}${location.pathname}#/book/${pageId}`
     : null
   const [copied, setCopied] = useState(false)
 
@@ -720,7 +716,7 @@ function BookingSettings({ config, onChange, userId, isMobile }: {
             </div>
           )}
 
-          {!userId && (
+          {!signedIn && (
             <p style={{ fontSize: '0.85rem', color: 'var(--warning)', margin: 0 }}>
               Sign in to generate your booking link.
             </p>
@@ -813,24 +809,25 @@ function BookingSettings({ config, onChange, userId, isMobile }: {
 
 // ---- Public Booking Page ----
 
-const bookingPages = fas.collections.collection('booking_pages')
-const bookings = fas.collections.collection('bookings')
+// The booking page is the one calendar collection other people read (`fas db share
+// booking_pages`). Guests open it by its document id, never by looking up the host.
+// Booking requests and invitations used to go through shared `bookings` and
+// `calendar_invites` collections that anyone could read; collections are private by
+// default now, so a guest cannot hand a request to a host and they were removed.
+const bookingPages = fas.collections.collection('booking_pages', { visibility: 'public-read' })
 
-function BookingPage({ userId }: { userId: string }) {
-  const { user } = useAuth(fas)
+function BookingPage({ pageId }: { pageId: string }) {
   const [config, setConfig] = useState<BookingConfig | null>(null)
   const [blockedSlots, setBlockedSlots] = useState<{ date: string; startTime: string; endTime: string }[]>([])
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
-  const [booked, setBooked] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const load = async () => {
       try {
-        const result = await bookingPages.query({ owner: userId, limit: 1 })
-        if (result.documents.length > 0) {
-          const doc = result.documents[0] as Record<string, unknown>
+        const doc = await bookingPages.get(pageId) as Record<string, unknown> | null
+        if (doc) {
           setConfig(doc.config as BookingConfig)
           setBlockedSlots((doc.blockedSlots as typeof blockedSlots) || [])
         }
@@ -838,7 +835,7 @@ function BookingPage({ userId }: { userId: string }) {
       setLoading(false)
     }
     load()
-  }, [userId])
+  }, [pageId])
 
   if (loading) {
     return (
@@ -874,38 +871,6 @@ function BookingPage({ userId }: { userId: string }) {
     startTime: s.startTime, endTime: s.endTime, color: '',
   }))
   const slots = selectedDate ? generateTimeSlots(config, parseDate(selectedDate), blockedEvents) : []
-
-  const handleBook = async () => {
-    if (!selectedDate || !selectedSlot || !user) return
-    try {
-      await bookings.create({
-        hostUserId: userId,
-        guestName: user.login,
-        guestAvatar: user.avatarUrl,
-        date: selectedDate,
-        startTime: selectedSlot,
-        endTime: minutesToTime(timeToMinutes(selectedSlot) + config.slotDuration),
-      })
-    } catch {}
-    setBooked(true)
-  }
-
-  if (booked) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100dvh', flexDirection: 'column', gap: '0.75rem', padding: '2rem' }}>
-        <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--mint)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', color: '#fff' }}>
-          &#10003;
-        </div>
-        <h2 style={{ fontWeight: 700, fontSize: '1.25rem', textAlign: 'center' }}>Booked!</h2>
-        <p style={{ color: 'var(--muted)', textAlign: 'center', maxWidth: 320 }}>
-          Your booking on {parseDate(selectedDate!).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} at {formatTime(selectedSlot!)} has been confirmed.
-        </p>
-        <button onClick={() => { location.hash = '' }} style={{ ...btnOutline, minHeight: 44 }}>Go to Calendar</button>
-      </div>
-    )
-  }
 
   return (
     <div style={{ maxWidth: 480, margin: '0 auto', padding: '1.5rem 1rem', minHeight: '100dvh' }}>
@@ -968,80 +933,11 @@ function BookingPage({ userId }: { userId: string }) {
       )}
 
       {selectedSlot && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
-          {user ? (
-            <>
-              <p style={{ fontSize: '0.85rem', margin: 0 }}>
-                Booking as <strong>{user.login}</strong>
-              </p>
-              <button onClick={handleBook} style={{ ...btnStyle, padding: '0.875rem', fontSize: '1rem',
-                minHeight: 48 }}>
-                Confirm Booking
-              </button>
-            </>
-          ) : (
-            <SignInButtons label="Sign in to book" />
-          )}
-        </div>
+        <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
+          {formatTime(selectedSlot)} is free. Online booking requests are not available yet: message
+          the host to confirm this time.
+        </p>
       )}
-    </div>
-  )
-}
-
-// ---- Invitations Inbox ----
-
-function InvitationsInbox({ invitations, onRespond }: {
-  invitations: Invitation[]
-  onRespond: (id: string, status: 'accepted' | 'declined') => void
-}) {
-  const pending = invitations.filter(i => i.status === 'pending')
-  if (pending.length === 0) {
-    return (
-      <div style={{ padding: '2rem 1rem', textAlign: 'center', flex: 1 }}>
-        <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No pending invitations</p>
-      </div>
-    )
-  }
-  return (
-    <div style={{ padding: '0.75rem', overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      {pending.map(inv => (
-        <div key={inv.id} style={{
-          padding: '0.75rem', borderRadius: 'var(--radius-sm)',
-          border: '1px solid var(--line)', background: 'var(--panel)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
-            {inv.hostAvatar && (
-              <img src={inv.hostAvatar} alt="" style={{ width: 24, height: 24, borderRadius: '50%' }} />
-            )}
-            <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-              <strong style={{ color: 'var(--ink)' }}>@{inv.hostLogin}</strong> invited you
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.25rem' }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: inv.eventColor, flexShrink: 0 }} />
-            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{inv.eventTitle}</span>
-          </div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>
-            {parseDate(inv.eventDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-            {' '}{formatTime(inv.eventStartTime)} - {formatTime(inv.eventEndTime)}
-            {inv.eventLocation && (
-              <div style={{ marginTop: 2 }}><MeetingLink url={inv.eventLocation} /></div>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: '0.375rem' }}>
-            <button onClick={() => onRespond(inv.id, 'accepted')}
-              style={{ ...btnStyle, padding: '0.375rem 0.75rem', fontSize: '0.8rem', flex: 1,
-                background: 'var(--mint)', minHeight: 36 }}>
-              Accept
-            </button>
-            <button onClick={() => onRespond(inv.id, 'declined')}
-              style={{ ...btnOutline, padding: '0.375rem 0.75rem', fontSize: '0.8rem', flex: 1,
-                minHeight: 36 }}>
-              Decline
-            </button>
-          </div>
-        </div>
-      ))}
     </div>
   )
 }
@@ -1058,7 +954,7 @@ export default function App() {
 
   const bookingMatch = hash.match(/^#\/book\/(.+)$/)
   if (bookingMatch) {
-    return <BookingPage userId={bookingMatch[1]} />
+    return <BookingPage pageId={bookingMatch[1]} />
   }
 
   return <CalendarApp />
@@ -1076,8 +972,6 @@ function CalendarApp() {
   const [showEventModal, setShowEventModal] = useState(false)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
   const [showBookingSettings, setShowBookingSettings] = useState(false)
-  const [showInbox, setShowInbox] = useState(false)
-  const [invitations, setInvitations] = useState<Invitation[]>([])
   const [bookingConfig, setBookingConfig] = useState<BookingConfig>(loadBookingConfig)
 
   // Persist events to localStorage
@@ -1116,71 +1010,6 @@ function CalendarApp() {
         const existing = await bookingPages.query({ owner: user.id, limit: 1 })
         if (existing.documents.length > 0) {
           setBookingPageDocId(existing.documents[0].id)
-        }
-
-        const guestBookings = await bookings.query({ limit: 100 })
-        const myBookings = guestBookings.documents.filter(
-          (b: Record<string, unknown>) => b.hostUserId === user.id
-        )
-        if (myBookings.length > 0) {
-          const newEvents: CalendarEvent[] = myBookings.map((b: Record<string, unknown>) => ({
-            id: b.id as string,
-            title: `Booking: ${b.guestName as string}`,
-            date: b.date as string,
-            startTime: b.startTime as string,
-            endTime: b.endTime as string,
-            color: '#4c97b5',
-            description: b.guestEmail ? `Contact: ${b.guestEmail}` : undefined,
-            isBooking: true,
-            bookedByName: b.guestName as string,
-          }))
-          setEvents(prev => {
-            const existingIds = new Set(prev.map(e => e.id))
-            const fresh = newEvents.filter(e => !existingIds.has(e.id))
-            return fresh.length > 0 ? [...prev, ...fresh] : prev
-          })
-        }
-
-        // Fetch invitations for this user
-        const allInvites = await invitesCollection.query({ limit: 100 })
-        const myInvites: Invitation[] = allInvites.documents
-          .filter((d: Record<string, unknown>) => d.inviteeId === user.id || d.inviteeLogin === user.login)
-          .map((d: Record<string, unknown>) => ({
-            id: d.id as string,
-            eventId: d.eventId as string,
-            eventTitle: d.eventTitle as string,
-            eventDate: d.eventDate as string,
-            eventStartTime: d.eventStartTime as string,
-            eventEndTime: d.eventEndTime as string,
-            eventLocation: d.eventLocation as string | undefined,
-            eventColor: (d.eventColor as string) || '#4c97b5',
-            hostId: d.hostId as string,
-            hostLogin: d.hostLogin as string,
-            hostAvatar: d.hostAvatar as string | null,
-            inviteeId: d.inviteeId as string,
-            status: d.status as Invitation['status'],
-          }))
-        setInvitations(myInvites)
-
-        // Auto-add accepted invitations as events
-        const acceptedInvites = myInvites.filter(i => i.status === 'accepted')
-        if (acceptedInvites.length > 0) {
-          setEvents(prev => {
-            const existingIds = new Set(prev.map(e => e.id))
-            const fresh = acceptedInvites
-              .filter(i => !existingIds.has(`inv-${i.id}`))
-              .map(i => ({
-                id: `inv-${i.id}`,
-                title: i.eventTitle,
-                date: i.eventDate,
-                startTime: i.eventStartTime,
-                endTime: i.eventEndTime,
-                color: i.eventColor,
-                location: i.eventLocation,
-                attendees: [{ userId: i.hostId, login: i.hostLogin, avatarUrl: i.hostAvatar, status: 'accepted' as const }],
-              }))
-            return fresh.length > 0 ? [...prev, ...fresh] : prev
-          })
         }
       } catch { /* silent */ }
     }
@@ -1313,59 +1142,6 @@ function CalendarApp() {
     setShowEventModal(true)
   }
 
-  // Send invitations when saving an event with new attendees
-  const handleSaveWithInvites = (ev: CalendarEvent) => {
-    const oldEvent = events.find(e => e.id === ev.id)
-    const oldAttendees = new Set((oldEvent?.attendees || []).map(a => a.login))
-    const newAttendees = (ev.attendees || []).filter(a => !oldAttendees.has(a.login))
-
-    if (user && newAttendees.length > 0) {
-      for (const attendee of newAttendees) {
-        invitesCollection.create({
-          eventId: ev.id,
-          eventTitle: ev.title,
-          eventDate: ev.date,
-          eventStartTime: ev.startTime,
-          eventEndTime: ev.endTime,
-          eventLocation: ev.location || null,
-          eventColor: ev.color,
-          hostId: user.id,
-          hostLogin: user.login,
-          hostAvatar: user.avatarUrl,
-          inviteeLogin: attendee.login,
-          inviteeId: '',
-          status: 'pending',
-        }).catch(() => {})
-      }
-    }
-
-    handleSaveEvent(ev)
-  }
-
-  const handleRespondInvitation = async (invId: string, status: 'accepted' | 'declined') => {
-    try {
-      await invitesCollection.update(invId, { status })
-      setInvitations(prev => prev.map(i => i.id === invId ? { ...i, status } : i))
-      if (status === 'accepted') {
-        const inv = invitations.find(i => i.id === invId)
-        if (inv) {
-          setEvents(prev => [...prev, {
-            id: `inv-${inv.id}`,
-            title: inv.eventTitle,
-            date: inv.eventDate,
-            startTime: inv.eventStartTime,
-            endTime: inv.eventEndTime,
-            color: inv.eventColor,
-            location: inv.eventLocation,
-            attendees: [{ userId: inv.hostId, login: inv.hostLogin, avatarUrl: inv.hostAvatar, status: 'accepted' }],
-          }])
-        }
-      }
-    } catch { /* silent */ }
-  }
-
-  const pendingCount = invitations.filter(i => i.status === 'pending').length
-
   const headerLabel = view === 'month'
     ? `${MONTH_NAMES[month]} ${year}`
     : view === 'week'
@@ -1416,20 +1192,7 @@ function CalendarApp() {
             </h2>
             {!isMobile && (
               <>
-                {user && (
-                  <button onClick={() => { setShowInbox(!showInbox); setShowBookingSettings(false) }}
-                    style={{ ...(showInbox ? btnStyle : btnOutline), padding: '0.3rem 0.625rem',
-                      fontSize: '0.75rem', position: 'relative' }}>
-                    Inbox
-                    {pendingCount > 0 && (
-                      <span style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16,
-                        borderRadius: '50%', background: 'var(--error)', color: '#fff', fontSize: '0.6rem',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
-                      }}>{pendingCount}</span>
-                    )}
-                  </button>
-                )}
-                <button onClick={() => { setShowBookingSettings(!showBookingSettings); setShowInbox(false) }}
+                <button onClick={() => { setShowBookingSettings(!showBookingSettings) }}
                   style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.625rem',
                     fontSize: '0.75rem' }}>
                   Booking
@@ -1454,20 +1217,7 @@ function CalendarApp() {
             </div>
             {isMobile && (
               <>
-                {user && (
-                  <button onClick={() => { setShowInbox(!showInbox); setShowBookingSettings(false) }}
-                    style={{ ...(showInbox ? btnStyle : btnOutline), padding: '0.3rem 0.5rem',
-                      fontSize: '0.7rem', minHeight: 32, position: 'relative' }}>
-                    Inbox
-                    {pendingCount > 0 && (
-                      <span style={{ position: 'absolute', top: -4, right: -4, width: 14, height: 14,
-                        borderRadius: '50%', background: 'var(--error)', color: '#fff', fontSize: '0.55rem',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
-                      }}>{pendingCount}</span>
-                    )}
-                  </button>
-                )}
-                <button onClick={() => { setShowBookingSettings(!showBookingSettings); setShowInbox(false) }}
+                <button onClick={() => { setShowBookingSettings(!showBookingSettings) }}
                   style={{ ...(showBookingSettings ? btnStyle : btnOutline), padding: '0.3rem 0.5rem',
                     fontSize: '0.7rem', minHeight: 32 }}>
                   Book
@@ -1482,11 +1232,9 @@ function CalendarApp() {
         </div>
 
         {/* Main content */}
-        {showInbox ? (
-          <InvitationsInbox invitations={invitations} onRespond={handleRespondInvitation} />
-        ) : showBookingSettings ? (
-          <BookingSettings config={bookingConfig} onChange={setBookingConfig} userId={user?.id}
-            isMobile={isMobile} />
+        {showBookingSettings ? (
+          <BookingSettings config={bookingConfig} onChange={setBookingConfig}
+            pageId={bookingPageDocId} signedIn={!!user} isMobile={isMobile} />
         ) : (
           <div ref={swipeRef} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0,
@@ -1518,7 +1266,7 @@ function CalendarApp() {
       <EventModal
         open={showEventModal}
         onClose={() => { setShowEventModal(false); setEditingEvent(null) }}
-        onSave={handleSaveWithInvites}
+        onSave={handleSaveEvent}
         onDelete={editingEvent ? handleDeleteEvent : undefined}
         event={editingEvent}
         user={user}
